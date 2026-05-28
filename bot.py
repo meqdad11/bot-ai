@@ -1,16 +1,19 @@
 #!/usr/bin/env python3
 """
-بوت تليجرام مدعوم بالذكاء الاصطناعي Claude
+بوت تليجرام مدعوم بـ Google Gemini
 """
 
 import os
 import logging
+import google.generativeai as genai
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
-import anthropic
 
+# ══════════════════════════════════════════
+#  إعدادات البوت
+# ══════════════════════════════════════════
 TELEGRAM_TOKEN = "8657095276:AAEVFG6dvxem5BPbUQO8Q7ZryVUwbCaGEAA"
-ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
 
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
@@ -18,13 +21,14 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# تخزين محادثات المستخدمين
 user_conversations: dict[int, list] = {}
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     await update.message.reply_text(
         f"أهلاً وسهلاً {user.first_name}! 👋\n\n"
-        "أنا بوت ذكاء اصطناعي مدعوم بـ Claude.\n"
+        "أنا بوت ذكاء اصطناعي مدعوم بـ Google Gemini.\n"
         "اسألني أي شيء وسأجيبك! 🤖\n\n"
         "الأوامر المتاحة:\n"
         "• /start - بدء المحادثة\n"
@@ -34,13 +38,12 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "🆘 *المساعدة*\n\n"
+        "🆘 المساعدة\n\n"
         "فقط أرسل أي سؤال أو رسالة وسأرد عليك!\n\n"
         "الأوامر:\n"
         "• /start - بدء المحادثة\n"
-        "• /clear - مسح سجل المحادثة (بداية جديدة)\n"
-        "• /help - عرض هذه الرسالة",
-        parse_mode="Markdown"
+        "• /clear - مسح سجل المحادثة\n"
+        "• /help - عرض هذه الرسالة"
     )
 
 async def clear_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -51,35 +54,53 @@ async def clear_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     user_message = update.message.text
+
     await update.message.chat.send_action("typing")
+
     if user_id not in user_conversations:
         user_conversations[user_id] = []
-    user_conversations[user_id].append({"role": "user", "content": user_message})
+
+    user_conversations[user_id].append({
+        "role": "user",
+        "parts": [user_message]
+    })
+
     try:
-        client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
-        response = client.messages.create(
-            model="claude-sonnet-4-20250514",
-            max_tokens=1000,
-            system="أنت مساعد ذكاء اصطناعي مفيد وودود تتحدث العربية والإنجليزية. أجب بنفس لغة المستخدم. كن مختصراً ومفيداً.",
-            messages=user_conversations[user_id]
+        genai.configure(api_key=GEMINI_API_KEY)
+        model = genai.GenerativeModel(
+            model_name="gemini-1.5-flash",
+            system_instruction="أنت مساعد ذكاء اصطناعي مفيد وودود. أجب بنفس لغة المستخدم. كن مختصراً ومفيداً."
         )
-        assistant_reply = response.content[0].text
-        user_conversations[user_id].append({"role": "assistant", "content": assistant_reply})
+
+        chat = model.start_chat(history=user_conversations[user_id][:-1])
+        response = chat.send_message(user_message)
+        assistant_reply = response.text
+
+        user_conversations[user_id].append({
+            "role": "model",
+            "parts": [assistant_reply]
+        })
+
         if len(user_conversations[user_id]) > 20:
             user_conversations[user_id] = user_conversations[user_id][-20:]
+
         await update.message.reply_text(assistant_reply)
-    except anthropic.AuthenticationError:
-        await update.message.reply_text("❌ خطأ في مفتاح Anthropic API.")
+
     except Exception as e:
         logger.error(f"Error: {e}")
-        await update.message.reply_text("⚠️ حدث خطأ غير متوقع. حاول مرة أخرى.")
+        await update.message.reply_text("⚠️ حدث خطأ. حاول مرة أخرى.")
 
 def main():
+    if not GEMINI_API_KEY:
+        print("⚠️ تحذير: لم يتم تعيين GEMINI_API_KEY")
+
+    print("🤖 جاري تشغيل البوت...")
     app = Application.builder().token(TELEGRAM_TOKEN).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("help", help_command))
     app.add_handler(CommandHandler("clear", clear_command))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+    print("✅ البوت يعمل الآن!")
     app.run_polling(allowed_updates=Update.ALL_TYPES)
 
 if __name__ == "__main__":
